@@ -1,11 +1,10 @@
 from django.shortcuts import render
-from datetime import datetime
 from rest_framework.views import APIView, status
 from rest_framework.response import Response
 from django.forms.models import model_to_dict
-import pdb
-
 from .models import Team
+from datetime import datetime
+from rest_framework.response import Response
 
 
 class NegativeTitlesError(Exception):
@@ -23,40 +22,45 @@ class ImpossibleTitlesError(Exception):
         self.message = message
 
 
-class TeamView(APIView):
-    def post(self, request):
-        try:
-            if request.data["titles"] < 0:
-                raise NegativeTitlesError("titles cannot be negative")
-        except NegativeTitlesError as err:
-            return Response({"error": err.message}, 400)
-
-        current_year = datetime.now().year
+class EnsureData:
+    def data_processing(data):
         all_cup = []
-        cup_count = 0
-        request_year = datetime.strptime(request.data["first_cup"], "%Y-%m-%d").year
+        current_year = datetime.now().year
+
         for year in range(1930, current_year + 1):
             if year == 1930 or year == 1934 or year == 1938:
                 all_cup.append(year)
-                cup_count = cup_count + 1
             elif (year - 1950) % 4 == 0 and year >= 1950:
                 all_cup.append(year)
-                cup_count = cup_count + 1
-        try:
+
+        if "titles" in data:
+            if data["titles"] < 0:
+                raise NegativeTitlesError("titles cannot be negative")
+
+        if "first_cup" in data:
+            request_year = datetime.strptime(data["first_cup"], "%Y-%m-%d").year
+            cup_count = (current_year - request_year) / 4
             if request_year < 1930:
                 raise InvalidYearCupError("there was no world cup this year")
             elif request_year not in all_cup:
                 raise InvalidYearCupError("there was no world cup this year")
-        except InvalidYearCupError as err:
-            return Response({"error": err.message}, 400)
+            if "titles" in data:
+                if data["titles"] > cup_count:
+                    raise ImpossibleTitlesError(
+                        "impossible to have more titles than disputed cups"
+                    )
 
+
+class TeamView(APIView):
+    def post(self, request):
         try:
-            if request.data["titles"] > cup_count:
-                raise ImpossibleTitlesError(
-                    "impossible to have more titles than disputed cups"
-                )
-        except ImpossibleTitlesError as err:
-            return Response({"error": err.message}, 400)
+            EnsureData.data_processing(request.data)
+        except InvalidYearCupError as error:
+            return Response({"error": error.message}, 400)
+        except ImpossibleTitlesError as error:
+            return Response({"error": error.message}, 400)
+        except NegativeTitlesError as error:
+            return Response({"error": error.message}, 400)
 
         team = Team.objects.create(**request.data)
         team_dict = model_to_dict(team)
@@ -79,7 +83,7 @@ class TeamDetailView(APIView):
         try:
             team = Team.objects.get(pk=team_id)
         except Team.DoesNotExist:
-            return Response({"error": "Team not found"}, 404)
+            return Response({"message": "Team not found"}, 404)
 
         team_dict = model_to_dict(team)
         return Response(team_dict)
